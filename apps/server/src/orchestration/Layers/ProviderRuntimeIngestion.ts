@@ -474,6 +474,114 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "session.configured": {
+      const config = event.payload.config;
+      if (!config || typeof config !== "object") return [];
+      const raw = config as Record<string, unknown>;
+      // Only emit context activity for SDK init messages (identified by having tools array).
+      if (!Array.isArray(raw.tools)) return [];
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "session.context",
+          summary: "Session context initialized",
+          payload: {
+            ...(Array.isArray(raw.tools) ? { tools: raw.tools } : {}),
+            ...(Array.isArray(raw.mcp_servers) ? { mcpServers: raw.mcp_servers } : {}),
+            ...(Array.isArray(raw.skills) ? { skills: raw.skills } : {}),
+            ...(Array.isArray(raw.agents) ? { agents: raw.agents } : {}),
+            ...(Array.isArray(raw.plugins) ? { plugins: raw.plugins } : {}),
+            ...(Array.isArray(raw.slash_commands) ? { slashCommands: raw.slash_commands } : {}),
+            ...(typeof raw.model === "string" ? { model: raw.model } : {}),
+            ...(typeof raw.cwd === "string" ? { cwd: raw.cwd } : {}),
+            ...(typeof raw.claude_code_version === "string"
+              ? { claudeCodeVersion: raw.claude_code_version }
+              : {}),
+            ...(typeof raw.permissionMode === "string"
+              ? { permissionMode: raw.permissionMode }
+              : {}),
+            ...(typeof raw.session_id === "string" ? { sessionId: raw.session_id } : {}),
+            ...(typeof raw.output_style === "string" ? { outputStyle: raw.output_style } : {}),
+            ...(Array.isArray(raw.betas) ? { betas: raw.betas } : {}),
+            ...(typeof raw.apiKeySource === "string" ? { apiKeySource: raw.apiKeySource } : {}),
+            ...(raw.fast_mode_state !== undefined ? { fastModeState: raw.fast_mode_state } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "turn.completed": {
+      if (event.payload.totalCostUsd === undefined) return [];
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "turn.cost",
+          summary: "Turn cost recorded",
+          payload: {
+            totalCostUsd: event.payload.totalCostUsd,
+            ...(event.payload.modelUsage !== undefined
+              ? { modelUsage: event.payload.modelUsage }
+              : {}),
+            ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+            state: event.payload.state,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "thread.token-usage.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "token-usage.updated",
+          summary: "Token usage updated",
+          payload: { usage: event.payload.usage },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "account.rate-limits.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "rate-limits.updated",
+          summary: "Rate limits updated",
+          payload: { rateLimits: event.payload.rateLimits },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
+    case "mcp.status.updated": {
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "mcp.status",
+          summary: "MCP server status updated",
+          payload: { status: event.payload.status },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     default:
       break;
   }

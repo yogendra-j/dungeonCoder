@@ -870,3 +870,141 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (session.status === "running") return "running";
   return "ready";
 }
+
+export interface ThreadContext {
+  tools: string[];
+  mcpServers: Array<{ name: string; status: string }>;
+  skills: string[];
+  agents: string[];
+  plugins: Array<{ name: string; path?: string | undefined }>;
+  slashCommands: string[];
+  model: string | undefined;
+  cwd: string | undefined;
+  claudeCodeVersion: string | undefined;
+  permissionMode: string | undefined;
+  sessionId: string | undefined;
+  outputStyle: string | undefined;
+  betas: string[];
+  apiKeySource: string | undefined;
+  fastModeState: string | undefined;
+}
+
+function safeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function safeMcpArray(value: unknown): Array<{ name: string; status: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is { name: string; status: string } =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as Record<string, unknown>).name === "string" &&
+      typeof (item as Record<string, unknown>).status === "string",
+  );
+}
+
+function safePluginArray(value: unknown): Array<{ name: string; path?: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (item): item is { name: string; path?: string } =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as Record<string, unknown>).name === "string",
+    )
+    .map((item) => ({
+      name: item.name,
+      ...(typeof (item as Record<string, unknown>).path === "string"
+        ? { path: (item as Record<string, unknown>).path as string }
+        : {}),
+    }));
+}
+
+export function deriveThreadContext(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ThreadContext | null {
+  // Find the latest session.context activity (reverse search for efficiency).
+  const latest = [...activities].reverse().find((a) => a.kind === "session.context");
+  if (!latest?.payload || typeof latest.payload !== "object") return null;
+  const p = latest.payload as Record<string, unknown>;
+  return {
+    tools: safeStringArray(p.tools),
+    mcpServers: safeMcpArray(p.mcpServers),
+    skills: safeStringArray(p.skills),
+    agents: safeStringArray(p.agents),
+    plugins: safePluginArray(p.plugins),
+    slashCommands: safeStringArray(p.slashCommands),
+    model: typeof p.model === "string" ? p.model : undefined,
+    cwd: typeof p.cwd === "string" ? p.cwd : undefined,
+    claudeCodeVersion: typeof p.claudeCodeVersion === "string" ? p.claudeCodeVersion : undefined,
+    permissionMode: typeof p.permissionMode === "string" ? p.permissionMode : undefined,
+    sessionId: typeof p.sessionId === "string" ? p.sessionId : undefined,
+    outputStyle: typeof p.outputStyle === "string" ? p.outputStyle : undefined,
+    betas: safeStringArray(p.betas),
+    apiKeySource: typeof p.apiKeySource === "string" ? p.apiKeySource : undefined,
+    fastModeState: typeof p.fastModeState === "string" ? p.fastModeState : undefined,
+  };
+}
+
+export interface UsageSummary {
+  totalCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+}
+
+function safeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function deriveUsageSummary(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): UsageSummary {
+  let totalCost = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+
+  for (const a of activities) {
+    if (a.kind === "turn.cost") {
+      const payload = a.payload as Record<string, unknown> | null;
+      totalCost += safeNumber(payload?.totalCostUsd);
+      if (payload?.usage && typeof payload.usage === "object") {
+        const u = payload.usage as Record<string, unknown>;
+        inputTokens += safeNumber(u.input_tokens);
+        outputTokens += safeNumber(u.output_tokens);
+        cacheReadTokens += safeNumber(u.cache_read_input_tokens);
+        cacheCreationTokens += safeNumber(u.cache_creation_input_tokens);
+      }
+    }
+  }
+
+  // Fall back to token-usage.updated if no turn.cost activities provided token data
+  if (inputTokens === 0 && outputTokens === 0) {
+    const latest = [...activities].reverse().find((a) => a.kind === "token-usage.updated");
+    if (latest?.payload && typeof latest.payload === "object") {
+      const usage = (latest.payload as Record<string, unknown>).usage;
+      if (usage && typeof usage === "object") {
+        const u = usage as Record<string, unknown>;
+        inputTokens = safeNumber(u.input_tokens);
+        outputTokens = safeNumber(u.output_tokens);
+        cacheReadTokens = safeNumber(u.cache_read_input_tokens);
+        cacheCreationTokens = safeNumber(u.cache_creation_input_tokens);
+      }
+    }
+  }
+
+  return {
+    totalCost,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    totalTokens: inputTokens + outputTokens,
+  };
+}

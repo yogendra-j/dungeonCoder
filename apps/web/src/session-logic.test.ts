@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveThreadContext,
+  deriveUsageSummary,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -1102,5 +1104,191 @@ describe("PROVIDER_OPTIONS", () => {
       label: "Cursor",
       available: false,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Thread Context Inspector derivation tests
+// ---------------------------------------------------------------------------
+
+describe("deriveThreadContext", () => {
+  it("returns null when no session.context activity exists", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({ kind: "tool.started", tone: "tool" }),
+    ];
+    expect(deriveThreadContext(activities)).toBeNull();
+  });
+
+  it("parses a complete session.context payload", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "session.context",
+        tone: "info",
+        payload: {
+          tools: ["Read", "Write", "Bash"],
+          mcpServers: [{ name: "test-server", status: "connected" }],
+          skills: ["commit", "review-pr"],
+          agents: ["general-purpose"],
+          plugins: [{ name: "my-plugin", path: "/path/to/plugin" }],
+          slashCommands: ["model", "plan", "default", "compact"],
+          model: "claude-sonnet-4-20250514",
+          cwd: "/home/user/project",
+          claudeCodeVersion: "1.2.3",
+          permissionMode: "bypassPermissions",
+          sessionId: "session-abc-123",
+          outputStyle: "concise",
+          betas: ["context-1m-2025-08-07"],
+          apiKeySource: "env",
+          fastModeState: "off",
+        },
+      }),
+    ];
+    const ctx = deriveThreadContext(activities);
+    expect(ctx).not.toBeNull();
+    expect(ctx!.tools).toEqual(["Read", "Write", "Bash"]);
+    expect(ctx!.mcpServers).toEqual([{ name: "test-server", status: "connected" }]);
+    expect(ctx!.skills).toEqual(["commit", "review-pr"]);
+    expect(ctx!.agents).toEqual(["general-purpose"]);
+    expect(ctx!.plugins).toEqual([{ name: "my-plugin", path: "/path/to/plugin" }]);
+    expect(ctx!.slashCommands).toEqual(["model", "plan", "default", "compact"]);
+    expect(ctx!.model).toBe("claude-sonnet-4-20250514");
+    expect(ctx!.cwd).toBe("/home/user/project");
+    expect(ctx!.claudeCodeVersion).toBe("1.2.3");
+    expect(ctx!.permissionMode).toBe("bypassPermissions");
+    expect(ctx!.betas).toEqual(["context-1m-2025-08-07"]);
+  });
+
+  it("uses the latest session.context activity when multiple exist", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "session.context",
+        tone: "info",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        payload: { tools: ["Read"], model: "old-model" },
+      }),
+      makeActivity({
+        kind: "session.context",
+        tone: "info",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        payload: { tools: ["Read", "Write"], model: "new-model" },
+      }),
+    ];
+    const ctx = deriveThreadContext(activities);
+    expect(ctx!.tools).toEqual(["Read", "Write"]);
+    expect(ctx!.model).toBe("new-model");
+  });
+
+  it("handles missing or malformed fields gracefully", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "session.context",
+        tone: "info",
+        payload: {
+          tools: ["Read"],
+          // Missing all other fields
+        },
+      }),
+    ];
+    const ctx = deriveThreadContext(activities);
+    expect(ctx).not.toBeNull();
+    expect(ctx!.tools).toEqual(["Read"]);
+    expect(ctx!.mcpServers).toEqual([]);
+    expect(ctx!.skills).toEqual([]);
+    expect(ctx!.model).toBeUndefined();
+    expect(ctx!.betas).toEqual([]);
+  });
+});
+
+describe("deriveUsageSummary", () => {
+  it("returns zeroes when no activities exist", () => {
+    const summary = deriveUsageSummary([]);
+    expect(summary.totalCost).toBe(0);
+    expect(summary.totalTokens).toBe(0);
+    expect(summary.inputTokens).toBe(0);
+    expect(summary.outputTokens).toBe(0);
+    expect(summary.cacheReadTokens).toBe(0);
+    expect(summary.cacheCreationTokens).toBe(0);
+  });
+
+  it("sums cost and tokens across multiple turn.cost activities", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "turn.cost",
+        tone: "info",
+        payload: {
+          totalCostUsd: 0.0012,
+          usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 20 },
+        },
+      }),
+      makeActivity({
+        kind: "turn.cost",
+        tone: "info",
+        payload: {
+          totalCostUsd: 0.003,
+          usage: { input_tokens: 400, output_tokens: 150, cache_creation_input_tokens: 30 },
+        },
+      }),
+      makeActivity({
+        kind: "tool.started",
+        tone: "tool",
+        payload: {},
+      }),
+    ];
+    const summary = deriveUsageSummary(activities);
+    expect(summary.totalCost).toBeCloseTo(0.0042, 6);
+    expect(summary.inputTokens).toBe(500);
+    expect(summary.outputTokens).toBe(200);
+    expect(summary.totalTokens).toBe(700);
+    expect(summary.cacheReadTokens).toBe(20);
+    expect(summary.cacheCreationTokens).toBe(30);
+  });
+
+  it("handles missing totalCostUsd in payload", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "turn.cost",
+        tone: "info",
+        payload: { state: "completed" },
+      }),
+    ];
+    const summary = deriveUsageSummary(activities);
+    expect(summary.totalCost).toBe(0);
+    expect(summary.totalTokens).toBe(0);
+  });
+
+  it("falls back to token-usage.updated when turn.cost has no token data", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "token-usage.updated",
+        tone: "info",
+        payload: { usage: { input_tokens: 500, output_tokens: 200 } },
+      }),
+    ];
+    const summary = deriveUsageSummary(activities);
+    expect(summary.inputTokens).toBe(500);
+    expect(summary.outputTokens).toBe(200);
+    expect(summary.totalTokens).toBe(700);
+  });
+
+  it("prefers turn.cost token data over token-usage.updated", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        kind: "token-usage.updated",
+        tone: "info",
+        payload: { usage: { input_tokens: 999, output_tokens: 999 } },
+      }),
+      makeActivity({
+        kind: "turn.cost",
+        tone: "info",
+        payload: {
+          totalCostUsd: 0.01,
+          usage: { input_tokens: 100, output_tokens: 50 },
+        },
+      }),
+    ];
+    const summary = deriveUsageSummary(activities);
+    expect(summary.inputTokens).toBe(100);
+    expect(summary.outputTokens).toBe(50);
+    expect(summary.totalTokens).toBe(150);
   });
 });

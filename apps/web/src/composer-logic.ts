@@ -2,7 +2,13 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+
+/** Built-in slash commands that are always available regardless of SDK context. */
+export const BUILTIN_SLASH_COMMANDS = ["model", "plan", "default"] as const;
+export type BuiltinSlashCommand = (typeof BUILTIN_SLASH_COMMANDS)[number];
+
+/** ComposerSlashCommand is a string to support dynamic SDK-provided commands. */
+export type ComposerSlashCommand = string;
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -11,7 +17,7 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default"];
+const SLASH_COMMANDS: readonly string[] = [...BUILTIN_SLASH_COMMANDS];
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -184,10 +190,20 @@ export function isCollapsedCursorAdjacentToInlineToken(
 
 export const isCollapsedCursorAdjacentToMention = isCollapsedCursorAdjacentToInlineToken;
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  /** Optional list of additional slash commands provided dynamically (e.g. from SDK context). */
+  availableCommands?: readonly string[],
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
+
+  const allCommands =
+    availableCommands && availableCommands.length > 0
+      ? [...new Set([...SLASH_COMMANDS, ...availableCommands])]
+      : SLASH_COMMANDS;
 
   if (linePrefix.startsWith("/")) {
     const commandMatch = /^\/(\S*)$/.exec(linePrefix);
@@ -201,7 +217,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
           rangeEnd: cursor,
         };
       }
-      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
+      if (allCommands.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
         return {
           kind: "slash-command",
           query: commandQuery,
@@ -239,7 +255,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): "plan" | "default" | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

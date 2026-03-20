@@ -37,6 +37,7 @@ import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuer
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
+  BUILTIN_SLASH_COMMANDS,
   clampCollapsedComposerCursor,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
@@ -55,6 +56,8 @@ import {
   findSidebarProposedPlan,
   findLatestProposedPlan,
   deriveWorkLogEntries,
+  deriveThreadContext,
+  deriveUsageSummary,
   hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
@@ -150,6 +153,7 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
+import { ThreadContextInspector } from "./chat/ThreadContextInspector";
 import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
@@ -335,6 +339,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<Record<string, number>>({});
   const [expandedWorkGroups, setExpandedWorkGroups] = useState<Record<string, boolean>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
+  const [contextInspectorOpen, setContextInspectorOpen] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -676,6 +681,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const threadContext = useMemo(
+    () => deriveThreadContext(threadActivities),
+    [threadActivities],
+  );
+  const threadUsageSummary = useMemo(
+    () => deriveUsageSummary(threadActivities),
+    [threadActivities],
+  );
+
+  // Derive available slash commands from thread context (for dynamic slash menu)
+  const availableSlashCommands = useMemo(() => {
+    if (!threadContext) return undefined;
+    const cmds = [
+      ...threadContext.slashCommands,
+      ...threadContext.skills,
+    ];
+    return cmds.length > 0 ? cmds : undefined;
+  }, [threadContext]);
+
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -1038,7 +1062,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      const slashCommandItems = [
+      // Built-in commands (always available)
+      const builtinItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = [
         {
           id: "slash:model",
           type: "slash-command",
@@ -1060,12 +1085,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
-      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      ];
+
+      // Dynamic SDK-provided slash commands (from thread context)
+      const sdkCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> =
+        (threadContext?.slashCommands ?? [])
+          .filter((cmd) => !(BUILTIN_SLASH_COMMANDS as readonly string[]).includes(cmd))
+          .map((cmd) => ({
+            id: `slash:${cmd}`,
+            type: "slash-command" as const,
+            command: cmd,
+            label: `/${cmd}`,
+            description: `Run /${cmd}`,
+          }));
+
+      // Skills as invocable slash commands
+      const skillItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> =
+        (threadContext?.skills ?? []).map((skill) => ({
+          id: `skill:${skill}`,
+          type: "slash-command" as const,
+          command: skill,
+          label: `/${skill}`,
+          description: `Invoke ${skill} skill`,
+        }));
+
+      const allSlashCommandItems = [...builtinItems, ...sdkCommandItems, ...skillItems];
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
-        return [...slashCommandItems];
+        return [...allSlashCommandItems];
       }
-      return slashCommandItems.filter(
+      return allSlashCommandItems.filter(
         (item) => item.command.includes(query) || item.label.slice(1).includes(query),
       );
     }
@@ -1585,6 +1634,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return !open;
     });
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+
+  const toggleContextInspector = useCallback(() => {
+    setContextInspectorOpen((open) => !open);
+  }, []);
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -3350,12 +3403,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(nextPrompt, expandedCursor, availableSlashCommands),
       );
     },
     [
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
+      availableSlashCommands,
       composerTerminalContexts,
       onChangeActivePendingUserInputCustomAnswer,
       setPrompt,
@@ -3491,6 +3547,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleDiff={onToggleDiff}
+          contextInspectorOpen={contextInspectorOpen}
+          hasContextData={threadContext !== null}
+          onToggleContextInspector={toggleContextInspector}
         />
       </header>
 
@@ -4101,6 +4160,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 planSidebarDismissedForTurnRef.current = turnKey;
               }
             }}
+          />
+        ) : null}
+
+        {/* Context inspector */}
+        {contextInspectorOpen && threadContext ? (
+          <ThreadContextInspector
+            context={threadContext}
+            usage={threadUsageSummary}
+            onClose={() => setContextInspectorOpen(false)}
           />
         ) : null}
       </div>
