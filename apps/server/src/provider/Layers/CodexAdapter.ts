@@ -1521,6 +1521,14 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       stopSession,
       listSessions,
       hasSession,
+      forkSession: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "forkSession",
+            detail: "Fork is not supported for the Codex provider.",
+          }),
+        ),
       stopAll,
       streamEvents: Stream.fromQueue(runtimeEventQueue),
     } satisfies CodexAdapterShape;

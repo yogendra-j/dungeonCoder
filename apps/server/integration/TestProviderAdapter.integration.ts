@@ -15,6 +15,7 @@ import {
 import { Effect, Queue, Stream } from "effect";
 
 import {
+  ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
   type ProviderAdapterError,
@@ -488,6 +489,14 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       readThread,
       rollbackThread,
       stopAll,
+      forkSession: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider,
+            method: "forkSession",
+            detail: "Fork is not supported in test adapter.",
+          }),
+        ),
       streamEvents: Stream.fromQueue(runtimeEvents),
     };
 

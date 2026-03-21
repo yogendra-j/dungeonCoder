@@ -8,6 +8,7 @@
  */
 import {
   type CanUseTool,
+  forkSession as sdkForkSession,
   query,
   type Options as ClaudeQueryOptions,
   type PermissionMode,
@@ -2941,6 +2942,40 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         return context !== undefined && !context.stopped;
       });
 
+    const forkSession: ClaudeAdapterShape["forkSession"] = (threadId, options) =>
+      Effect.gen(function* () {
+        const context = yield* requireSession(threadId);
+        if (!context.resumeSessionId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "forkSession",
+            detail: `No SDK session ID available for thread '${threadId}'.`,
+          });
+        }
+
+        const forkResult = yield* Effect.tryPromise({
+          try: () =>
+            sdkForkSession(context.resumeSessionId!, {
+              ...(options?.title ? { title: options.title } : {}),
+            }),
+          catch: (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "forkSession",
+              detail:
+                cause instanceof Error
+                  ? cause.message
+                  : `SDK forkSession failed: ${String(cause)}`,
+            }),
+        });
+
+        const resumeCursor = {
+          resume: forkResult.sessionId,
+        };
+
+        return { resumeCursor, sdkSessionId: forkResult.sessionId };
+      });
+
     const stopAll: ClaudeAdapterShape["stopAll"] = () =>
       Effect.forEach(
         sessions,
@@ -2977,6 +3012,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       stopSession,
       listSessions,
       hasSession,
+      forkSession,
       stopAll,
       streamEvents: Stream.fromQueue(runtimeEventQueue),
     } satisfies ClaudeAdapterShape;

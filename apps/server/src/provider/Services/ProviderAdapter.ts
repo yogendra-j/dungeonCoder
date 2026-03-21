@@ -115,6 +115,15 @@ export interface ProviderAdapterShape<TError> {
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
   /**
+   * Fork a provider session, creating a new session with the same conversation history.
+   * Claude-only; other adapters should return an error.
+   */
+  readonly forkSession: (
+    threadId: ThreadId,
+    options?: { title?: string },
+  ) => Effect.Effect<{ resumeCursor: unknown; sdkSessionId: string }, TError>;
+
+  /**
    * Stop all sessions owned by this adapter.
    */
   readonly stopAll: () => Effect.Effect<void, TError>;

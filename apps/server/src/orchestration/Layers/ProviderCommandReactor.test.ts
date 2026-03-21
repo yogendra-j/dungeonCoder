@@ -198,6 +198,7 @@ describe("ProviderCommandReactor", () => {
           sessionModelSwitch: provider === "codex" ? "in-session" : "in-session",
         }),
       rollbackConversation: () => unsupported(),
+      forkSession: () => Effect.die(new Error("not implemented")),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
 
@@ -336,6 +337,7 @@ describe("ProviderCommandReactor", () => {
       listSessions: () => Effect.succeed(runtimeSessions),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" as const }),
       rollbackConversation: unsupported,
+      forkSession: () => Effect.die(new Error("not implemented")),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
 

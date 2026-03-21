@@ -24,6 +24,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   getDefaultModel,
+  inferProviderForModel,
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
@@ -2416,6 +2417,67 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
+  const [isForkingThread, setIsForkingThread] = useState(false);
+
+  const onForkAtMessage = useCallback(
+    async (messageId: MessageId) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !activeProject || isForkingThread) return;
+
+      if (phase === "running" || isSendBusy || isConnecting) {
+        setThreadError(activeThread.id, "Interrupt the current turn before forking.");
+        return;
+      }
+
+      // Guard: Claude-only
+      if (inferProviderForModel(activeThread.model) !== "claudeAgent") return;
+
+      setIsForkingThread(true);
+      setThreadError(activeThread.id, null);
+      try {
+        const forkThreadId = newThreadId();
+
+        // Find the clicked user message text to pre-fill the composer
+        const clickedMessage = activeThread.messages.find((m) => m.id === messageId);
+
+        // Register a draft thread so the route guard recognises the new threadId
+        // before the server-side thread.create event arrives via the event stream.
+        setProjectDraftThreadId(activeProject.id, forkThreadId, {
+          createdAt: new Date().toISOString(),
+          runtimeMode: activeThread.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+          interactionMode: activeThread.interactionMode ?? DEFAULT_INTERACTION_MODE,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.fork",
+          commandId: newCommandId(),
+          sourceThreadId: activeThread.id,
+          newThreadId: forkThreadId,
+          forkBeforeMessageId: messageId,
+          createdAt: new Date().toISOString(),
+        });
+
+        // Pre-fill the forked thread's composer with the clicked message text
+        if (clickedMessage?.text) {
+          useComposerDraftStore.getState().setPrompt(forkThreadId, clickedMessage.text);
+        }
+
+        // Navigate to the forked thread
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: forkThreadId },
+        });
+      } catch (err) {
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to fork thread.",
+        );
+      }
+      setIsForkingThread(false);
+    },
+    [activeProject, activeThread, isConnecting, isForkingThread, isSendBusy, navigate, phase, setProjectDraftThreadId, setThreadError],
+  );
+
   const onStartSession = useCallback(async () => {
     const api = readNativeApi();
     if (!api || !activeThread || !activeProject || !isLocalDraftThread) return;
@@ -3714,6 +3776,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 sessionPhase={phase}
                 sessionInitInProgress={sessionInitInProgress}
                 onStartSession={onStartSession}
+                onForkAtMessage={
+                  inferProviderForModel(activeThread?.model) === "claudeAgent"
+                    ? onForkAtMessage
+                    : undefined
+                }
+                isForkingThread={isForkingThread}
               />
             </div>
 

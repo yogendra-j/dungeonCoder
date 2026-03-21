@@ -1,11 +1,14 @@
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   EventId,
   MessageId,
   type ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  type OrchestrationReadModel,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import { Cause, Effect, Layer, Option, Stream } from "effect";
@@ -18,6 +21,7 @@ import {
 } from "../../checkpointing/Utils.ts";
 import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
+import { GitCore } from "../../git/Services/GitCore.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -68,6 +72,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
+  const gitCore = yield* GitCore;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -684,6 +689,171 @@ const make = Effect.gen(function* () {
       );
   });
 
+  const appendForkFailureActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly detail: string;
+    readonly createdAt: string;
+  }) =>
+    orchestrationEngine.dispatch({
+      type: "thread.activity.append",
+      commandId: serverCommandId("fork-failure"),
+      threadId: input.threadId,
+      activity: {
+        id: EventId.makeUnsafe(crypto.randomUUID()),
+        tone: "error",
+        kind: "thread.fork.failed",
+        summary: "Fork failed",
+        payload: {
+          detail: input.detail,
+        },
+        turnId: null,
+        createdAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
+
+  /**
+   * Determine the fork-point turn count by walking the source thread's messages
+   * and checkpoints. Mirrors the frontend `revertTurnCountByUserMessageId` logic.
+   */
+  function determineForkTurnCount(
+    thread: OrchestrationReadModel["threads"][number],
+    forkBeforeMessageId: MessageId,
+  ): number | undefined {
+    const messages = thread.messages;
+    const messageIndex = messages.findIndex((m) => m.id === forkBeforeMessageId);
+    if (messageIndex < 0) return undefined;
+
+    // Walk forward from the fork message to find the assistant message's checkpoint
+    for (let i = messageIndex; i < messages.length; i++) {
+      const msg = messages[i];
+      if (!msg || msg.role === "user" && i > messageIndex) break;
+      if (msg.role !== "assistant") continue;
+
+      const checkpoint = thread.checkpoints.find(
+        (cp) => cp.turnId !== null && msg.turnId !== null && cp.turnId === msg.turnId,
+      );
+      if (checkpoint) {
+        return Math.max(0, checkpoint.checkpointTurnCount - 1);
+      }
+    }
+    return undefined;
+  }
+
+  const handleForkRequested = Effect.fnUntraced(function* (
+    event: Extract<OrchestrationEvent, { type: "thread.fork-requested" }>,
+  ) {
+    const now = new Date().toISOString();
+    const { sourceThreadId, newThreadId, forkBeforeMessageId, createdAt } = event.payload;
+
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === sourceThreadId);
+    if (!thread) {
+      yield* appendForkFailureActivity({
+        threadId: sourceThreadId,
+        detail: "Source thread was not found in read model.",
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
+    // 1. Determine the fork-point turn count
+    const forkTurnCount = determineForkTurnCount(thread, forkBeforeMessageId);
+
+    // 2. Resolve workspace CWD
+    const sessionRuntime = yield* resolveSessionRuntimeForThread(sourceThreadId);
+    const sourceCwd = Option.match(sessionRuntime, {
+      onNone: () =>
+        resolveThreadWorkspaceCwd({ thread, projects: readModel.projects }),
+      onSome: (runtime) => runtime.cwd,
+    });
+
+    // 3. Fork the SDK session
+    const forkResult = yield* providerService.forkSession({
+      threadId: sourceThreadId,
+      title: `Fork of ${thread.title}`,
+    });
+
+    // 4. Create git worktree from fork-point checkpoint (if checkpoint available)
+    let worktreePath: string | null = null;
+    let worktreeBranch: string | null = thread.branch;
+
+    if (sourceCwd && forkTurnCount !== undefined && isGitRepository(sourceCwd)) {
+      const checkpointRef = forkTurnCount === 0
+        ? checkpointRefForThreadTurn(sourceThreadId, 0)
+        : thread.checkpoints.find(
+            (cp) => cp.checkpointTurnCount === forkTurnCount,
+          )?.checkpointRef;
+
+      if (checkpointRef) {
+        const hasRef = yield* checkpointStore.hasCheckpointRef({
+          cwd: sourceCwd,
+          checkpointRef,
+        });
+
+        if (hasRef) {
+          const forkBranch = `t3code-fork-${crypto.randomUUID().slice(0, 8)}`;
+          const worktreeResult = yield* gitCore.createWorktree({
+            cwd: sourceCwd!,
+            branch: checkpointRef,
+            newBranch: forkBranch,
+            path: null,
+          });
+          worktreePath = worktreeResult.worktree.path;
+          worktreeBranch = worktreeResult.worktree.branch;
+        }
+      }
+    }
+
+    // 5. Create the new thread
+    yield* orchestrationEngine.dispatch({
+      type: "thread.create",
+      commandId: serverCommandId("fork-thread-create"),
+      threadId: newThreadId,
+      projectId: thread.projectId,
+      title: `Fork of ${thread.title}` as any,
+      model: thread.model as any,
+      runtimeMode: thread.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+      interactionMode: thread.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: worktreeBranch,
+      worktreePath,
+      createdAt,
+    });
+
+    // 6. Copy messages up to (not including) the fork-before message
+    const messageIndex = thread.messages.findIndex((m) => m.id === forkBeforeMessageId);
+    const messagesToCopy = messageIndex > 0 ? thread.messages.slice(0, messageIndex) : [];
+
+    for (const msg of messagesToCopy) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.seed",
+        commandId: serverCommandId("fork-message-seed"),
+        threadId: newThreadId,
+        messageId: MessageId.makeUnsafe(`fork:${msg.id}:${crypto.randomUUID().slice(0, 8)}`),
+        role: msg.role,
+        text: msg.text,
+        ...(msg.attachments !== undefined ? { attachments: msg.attachments } : {}),
+        turnId: null,
+        createdAt: msg.createdAt ?? now,
+      });
+    }
+
+    // 7. Start a provider session on the new thread with the forked resumeCursor.
+    // This binds the forked SDK session to the new thread so future turns
+    // continue from the fork point. The ProviderCommandReactor will also see
+    // thread.created, but ensureSessionForThread will find an active session
+    // and skip the redundant start.
+    const effectiveCwd = worktreePath ?? sourceCwd;
+    yield* providerService.startSession(newThreadId, {
+      threadId: newThreadId,
+      provider: "claudeAgent",
+      ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+      model: thread.model,
+      resumeCursor: forkResult.resumeCursor,
+      runtimeMode: thread.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+    });
+  });
+
   const processDomainEvent = Effect.fnUntraced(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
@@ -696,6 +866,19 @@ const make = Effect.gen(function* () {
           appendRevertFailureActivity({
             threadId: event.payload.threadId,
             turnCount: event.payload.turnCount,
+            detail: error.message,
+            createdAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      return;
+    }
+
+    if (event.type === "thread.fork-requested") {
+      yield* handleForkRequested(event).pipe(
+        Effect.catch((error) =>
+          appendForkFailureActivity({
+            threadId: event.payload.sourceThreadId,
             detail: error.message,
             createdAt: new Date().toISOString(),
           }),
@@ -773,6 +956,7 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.fork-requested" &&
           event.type !== "thread.turn-diff-completed"
         ) {
           return Effect.void;

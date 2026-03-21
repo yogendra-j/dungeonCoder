@@ -187,6 +187,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    forkSession: vi.fn(),
     stopAll,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };

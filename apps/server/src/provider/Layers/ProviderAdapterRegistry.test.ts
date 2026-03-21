@@ -24,6 +24,7 @@ const fakeCodexAdapter: CodexAdapterShape = {
   hasSession: vi.fn(),
   readThread: vi.fn(),
   rollbackThread: vi.fn(),
+  forkSession: vi.fn(),
   stopAll: vi.fn(),
   streamEvents: Stream.empty,
 };
@@ -41,6 +42,7 @@ const fakeClaudeAdapter: ClaudeAdapterShape = {
   hasSession: vi.fn(),
   readThread: vi.fn(),
   rollbackThread: vi.fn(),
+  forkSession: vi.fn(),
   stopAll: vi.fn(),
   streamEvents: Stream.empty,
 };

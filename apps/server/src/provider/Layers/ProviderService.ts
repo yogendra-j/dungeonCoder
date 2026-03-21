@@ -532,6 +532,18 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         });
       });
 
+    const forkSession: ProviderServiceShape["forkSession"] = (rawInput) =>
+      Effect.gen(function* () {
+        const routed = yield* resolveRoutableSession({
+          threadId: rawInput.threadId,
+          operation: "ProviderService.forkSession",
+          allowRecovery: false,
+        });
+        return yield* routed.adapter.forkSession(routed.threadId, {
+          ...(rawInput.title !== undefined ? { title: rawInput.title } : {}),
+        });
+      });
+
     const runStopAll = () =>
       Effect.gen(function* () {
         const threadIds = yield* directory.listThreadIds();
@@ -585,6 +597,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       listSessions,
       getCapabilities,
       rollbackConversation,
+      forkSession,
       // Each access creates a fresh PubSub subscription so that multiple
       // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
       // independently receive all runtime events.

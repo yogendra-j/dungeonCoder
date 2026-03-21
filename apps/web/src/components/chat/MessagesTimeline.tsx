@@ -44,6 +44,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { MessageForkButton } from "./MessageForkButton";
 import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
@@ -89,6 +90,8 @@ interface MessagesTimelineProps {
   sessionPhase?: SessionPhase;
   sessionInitInProgress?: boolean;
   onStartSession?: () => void;
+  onForkAtMessage?: ((messageId: MessageId) => void) | undefined;
+  isForkingThread?: boolean | undefined;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -118,6 +121,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   sessionPhase,
   sessionInitInProgress,
   onStartSession,
+  onForkAtMessage,
+  isForkingThread,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -478,6 +483,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {displayedUserMessage.copyText && (
                       <MessageCopyButton text={displayedUserMessage.copyText} />
+                    )}
+                    {onForkAtMessage && canRevertAgentWork && (
+                      <MessageForkButton
+                        onFork={() => onForkAtMessage(row.message.id)}
+                        disabled={!!isForkingThread || isWorking}
+                      />
                     )}
                     {canRevertAgentWork && (
                       <Button

@@ -100,6 +100,15 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
+   * Fork a provider session, creating a new session with the same conversation history.
+   * Claude-only.
+   */
+  readonly forkSession: (input: {
+    readonly threadId: ThreadId;
+    readonly title?: string;
+  }) => Effect.Effect<{ resumeCursor: unknown; sdkSessionId: string }, ProviderServiceError>;
+
+  /**
    * Canonical provider runtime event stream.
    *
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).

@@ -75,6 +75,7 @@ function createProviderServiceHarness() {
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     rollbackConversation: () => unsupported(),
+    forkSession: () => Effect.die(new Error("not implemented")),
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
 
