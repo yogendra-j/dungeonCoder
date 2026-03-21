@@ -1438,6 +1438,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               payload: {
                 streamKind,
                 delta: deltaText,
+                ...(streamKind === "reasoning_text" ? { contentIndex: event.index } : {}),
               },
               providerRefs: nativeProviderRefs(context),
               raw: {

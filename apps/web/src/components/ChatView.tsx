@@ -1,25 +1,25 @@
 import {
-  type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  type ClaudeCodeEffort,
-  type MessageId,
-  type ProjectScript,
-  type ModelSlug,
-  type ProviderKind,
-  type ProjectEntry,
-  type ProjectId,
-  type ProviderApprovalDecision,
+  OrchestrationThreadActivity,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ProviderInteractionMode,
+  RuntimeMode,
+  type ApprovalRequestId,
+  type ClaudeCodeEffort,
+  type EditorId,
+  type KeybindingCommand,
+  type MessageId,
+  type ModelSlug,
+  type ProjectEntry,
+  type ProjectId,
+  type ProjectScript,
+  type ProviderApprovalDecision,
+  type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ServerProviderStatus,
   type ThreadId,
   type TurnId,
-  type EditorId,
-  type KeybindingCommand,
-  OrchestrationThreadActivity,
-  ProviderInteractionMode,
-  RuntimeMode,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -27,72 +27,9 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
-import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
-import { isElectron } from "../env";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
-import {
-  BUILTIN_SLASH_COMMANDS,
-  clampCollapsedComposerCursor,
-  type ComposerTrigger,
-  collapseExpandedComposerCursor,
-  detectComposerTrigger,
-  expandCollapsedComposerCursor,
-  parseStandaloneComposerSlashCommand,
-  replaceTextRange,
-} from "../composer-logic";
-import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  derivePhase,
-  deriveTimelineEntries,
-  deriveActiveWorkStartedAt,
-  deriveActivePlanState,
-  findSidebarProposedPlan,
-  findLatestProposedPlan,
-  deriveWorkLogEntries,
-  deriveThreadContext,
-  deriveUsageSummary,
-  hasActionableProposedPlan,
-  hasToolActivityForTurn,
-  isLatestTurnSettled,
-  formatElapsed,
-} from "../session-logic";
-import { isScrollContainerNearBottom } from "../chat-scroll";
-import {
-  buildPendingUserInputAnswers,
-  derivePendingUserInputProgress,
-  setPendingUserInputCustomAnswer,
-  type PendingUserInputDraftAnswer,
-} from "../pendingUserInput";
-import { useStore } from "../store";
-import {
-  buildPlanImplementationThreadTitle,
-  buildPlanImplementationPrompt,
-  proposedPlanTitle,
-  resolvePlanFollowUpSubmission,
-} from "../proposedPlan";
-import { truncateTitle } from "../truncateTitle";
-import {
-  DEFAULT_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
-  DEFAULT_THREAD_TERMINAL_ID,
-  MAX_TERMINALS_PER_GROUP,
-  type ChatMessage,
-  type TurnDiffSummary,
-} from "../types";
-import { basenameOfPath } from "../vscode-icons";
-import { useTheme } from "../hooks/useTheme";
-import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import BranchToolbar from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import PlanSidebar from "./PlanSidebar";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   BotIcon,
   ChevronDownIcon,
@@ -104,38 +41,50 @@ import {
   LockOpenIcon,
   XIcon,
 } from "lucide-react";
-import { Button } from "./ui/button";
-import { Separator } from "./ui/separator";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { cn, randomUUID } from "~/lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { toastManager } from "./ui/toast";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
-import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { cn, newCommandId, newMessageId, newThreadId, randomUUID } from "~/lib/utils";
+import { readNativeApi } from "~/nativeApi";
 import {
   commandForProjectScript,
   nextProjectScriptId,
-  projectScriptRuntimeEnv,
   projectScriptIdFromCommand,
+  projectScriptRuntimeEnv,
   setupProjectScript,
 } from "~/projectScripts";
-import { SidebarTrigger } from "./ui/sidebar";
-import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
-import { readNativeApi } from "~/nativeApi";
 import {
   getCustomModelOptionsByProvider,
   getCustomModelsByProvider,
   resolveAppModelSelection,
   useAppSettings,
 } from "../appSettings";
-import { isTerminalFocused } from "../lib/terminalFocus";
+import { isScrollContainerNearBottom } from "../chat-scroll";
 import {
+  BUILTIN_SLASH_COMMANDS,
+  clampCollapsedComposerCursor,
+  collapseExpandedComposerCursor,
+  detectComposerTrigger,
+  expandCollapsedComposerCursor,
+  parseStandaloneComposerSlashCommand,
+  replaceTextRange,
+  type ComposerTrigger,
+} from "../composer-logic";
+import {
+  useComposerDraftStore,
+  useComposerThreadDraft,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
-  useComposerDraftStore,
-  useComposerThreadDraft,
 } from "../composerDraftStore";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import { isElectron } from "../env";
+import { useTheme } from "../hooks/useTheme";
+import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -144,18 +93,53 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
-import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
+import { isTerminalFocused } from "../lib/terminalFocus";
+import {
+  buildPendingUserInputAnswers,
+  derivePendingUserInputProgress,
+  setPendingUserInputCustomAnswer,
+  type PendingUserInputDraftAnswer,
+} from "../pendingUserInput";
+import {
+  buildPlanImplementationPrompt,
+  buildPlanImplementationThreadTitle,
+  proposedPlanTitle,
+  resolvePlanFollowUpSubmission,
+} from "../proposedPlan";
+import {
+  deriveActivePlanState,
+  deriveActiveWorkStartedAt,
+  derivePendingApprovals,
+  derivePendingUserInputs,
+  derivePhase,
+  deriveThreadContext,
+  deriveTimelineEntries,
+  deriveUsageSummary,
+  deriveWorkLogEntries,
+  findLatestProposedPlan,
+  findSidebarProposedPlan,
+  formatElapsed,
+  hasActionableProposedPlan,
+  hasToolActivityForTurn,
+  isLatestTurnSettled,
+} from "../session-logic";
+import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
-import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { truncateTitle } from "../truncateTitle";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  DEFAULT_THREAD_TERMINAL_ID,
+  MAX_TERMINALS_PER_GROUP,
+  type ChatMessage,
+  type TurnDiffSummary,
+} from "../types";
+import { basenameOfPath } from "../vscode-icons";
+import BranchToolbar from "./BranchToolbar";
 import { ChatHeader } from "./chat/ChatHeader";
-import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
-import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
-import { ThreadContextInspector } from "./chat/ThreadContextInspector";
-import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./chat/CompactComposerControlsMenu";
+import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
+import { ComposerPendingApprovalActions } from "./chat/ComposerPendingApprovalActions";
 import { ComposerPendingApprovalPanel } from "./chat/ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
@@ -164,7 +148,11 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./chat/composerProviderRegistry";
+import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
+import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
+import { ThreadContextInspector } from "./chat/ThreadContextInspector";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildExpiredTerminalContextToastCopy,
@@ -181,7 +169,18 @@ import {
   revokeUserMessagePreviewUrls,
   SendPhase,
 } from "./ChatView.logic";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
+import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import PlanSidebar from "./PlanSidebar";
+import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import { Button } from "./ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import { Separator } from "./ui/separator";
+import { SidebarTrigger } from "./ui/sidebar";
+import { toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -390,6 +389,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const onSendRef = useRef<(e?: { preventDefault: () => void }) => Promise<void>>(async () => {});
+  const availableSlashCommandsRef = useRef<string[] | undefined>(undefined);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -454,6 +455,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         detectComposerTrigger(
           nextPrompt.prompt,
           expandCollapsedComposerCursor(nextPrompt.prompt, nextPrompt.cursor),
+          availableSlashCommandsRef.current,
         ),
       );
     },
@@ -704,6 +706,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const cmds = [...threadContext.slashCommands, ...threadContext.skills];
     return cmds.length > 0 ? cmds : undefined;
   }, [threadContext]);
+  availableSlashCommandsRef.current = availableSlashCommands;
 
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
@@ -814,6 +817,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       detectComposerTrigger(
         nextCustomAnswer,
         expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
+        availableSlashCommands,
       ),
     );
     setComposerHighlightedItemId(null);
@@ -1284,12 +1288,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       promptRef.current = insertion.prompt;
       setComposerCursor(nextCollapsedCursor);
-      setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+      setComposerTrigger(
+        detectComposerTrigger(insertion.prompt, insertion.cursor, availableSlashCommands),
+      );
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCollapsedCursor);
       });
     },
-    [activeThread, composerCursor, composerTerminalContexts, insertComposerDraftTerminalContext],
+    [
+      activeThread,
+      availableSlashCommands,
+      composerCursor,
+      composerTerminalContexts,
+      insertComposerDraftTerminalContext,
+    ],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -1980,11 +1992,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendStartedAt(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerTrigger(
+      detectComposerTrigger(promptRef.current, promptRef.current.length, availableSlashCommands),
+    );
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     setExpandedImage(null);
-  }, [threadId]);
+  }, [availableSlashCommands, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2766,7 +2780,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+        setComposerTrigger(
+          detectComposerTrigger(promptForSend, promptForSend.length, availableSlashCommands),
+        );
       }
       setThreadError(
         threadIdForSend,
@@ -2778,6 +2794,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     }
   };
+
+  onSendRef.current = onSend;
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -2905,10 +2923,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(value, expandedCursor, availableSlashCommands),
       );
     },
-    [activePendingUserInput],
+    [activePendingUserInput, availableSlashCommands],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -3232,10 +3252,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setPrompt(nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      setComposerTrigger(
+        detectComposerTrigger(nextPrompt, nextPrompt.length, availableSlashCommands),
+      );
       scheduleComposerFocus();
     },
-    [scheduleComposerFocus, setPrompt],
+    [availableSlashCommands, scheduleComposerFocus, setPrompt],
   );
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
@@ -3295,14 +3317,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
+        detectComposerTrigger(
+          next.text,
+          expandCollapsedComposerCursor(next.text, nextCursor),
+          availableSlashCommands,
+        ),
       );
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCursor);
       });
       return true;
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
+    [
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      availableSlashCommands,
+      setPrompt,
+    ],
   );
 
   const readComposerSnapshot = useCallback((): {
@@ -3330,9 +3361,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: detectComposerTrigger(
+        snapshot.value,
+        snapshot.expandedCursor,
+        availableSlashCommands,
+      ),
     };
-  }, [readComposerSnapshot]);
+  }, [readComposerSnapshot, availableSlashCommands]);
 
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -3354,7 +3389,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           replacementRangeEnd,
           replacement,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3373,20 +3410,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
             trigger.rangeStart,
             replacementRangeEnd,
             replacement,
-            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            {
+              expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+            },
           );
           if (applied) {
             setComposerHighlightedItemId(null);
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        if (item.command === "plan" || item.command === "default") {
+          void handleInteractionModeChange(item.command);
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        // SDK-provided or skill slash command – replace trigger with full
+        // command text and send it so the agent can process it.
+        const commandText = `/${item.command} `;
+        applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, commandText, {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
-        if (applied) {
-          setComposerHighlightedItemId(null);
-        }
+        setComposerHighlightedItemId(null);
+        void onSendRef.current();
         return;
       }
       onProviderModelSelect(item.provider, item.model);

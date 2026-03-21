@@ -779,6 +779,7 @@ describe("deriveWorkLogEntries", () => {
         tone: "info",
         payload: {
           detail: "Compare both transport layers",
+          delta: "Compare both transport layers",
           streamKind: "reasoning_text",
           contentIndex: 0,
         },
@@ -790,6 +791,7 @@ describe("deriveWorkLogEntries", () => {
         tone: "info",
         payload: {
           detail: "Transport comparison complete.",
+          delta: "Transport comparison complete.",
           streamKind: "reasoning_summary_text",
           summaryIndex: 1,
         },

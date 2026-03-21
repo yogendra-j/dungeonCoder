@@ -643,6 +643,11 @@ const make = Effect.gen(function* () {
     DEFAULT_ASSISTANT_DELIVERY_MODE,
   );
 
+  // Monotonically increasing counter stamped onto every runtime event so that
+  // activities derived from those events preserve their original arrival order
+  // even when `createdAt` timestamps collide (common for fast-firing deltas).
+  const sessionSequenceRef = yield* Ref.make(0);
+
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
@@ -1345,7 +1350,12 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event);
+      // Stamp the event with a monotonic sequence so that derived activities
+      // sort in arrival order even when their ISO timestamps are identical.
+      const seq = yield* Ref.getAndUpdate(sessionSequenceRef, (n) => n + 1);
+      const stampedEvent = Object.assign(event, { sessionSequence: seq });
+
+      const activities = runtimeEventToActivities(stampedEvent);
       yield* Effect.forEach(activities, (activity) =>
         orchestrationEngine.dispatch({
           type: "thread.activity.append",
