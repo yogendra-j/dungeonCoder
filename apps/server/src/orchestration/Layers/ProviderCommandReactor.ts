@@ -498,18 +498,12 @@ const make = Effect.gen(function* () {
   const processThreadCreated = Effect.fnUntraced(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.created" }>,
   ) {
-    yield* ensureSessionForThread(
-      event.payload.threadId,
-      event.payload.createdAt,
-    ).pipe(
+    yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning(
-          "provider command reactor failed to start session on thread creation",
-          {
-            threadId: event.payload.threadId,
-            cause: Cause.pretty(cause),
-          },
-        ),
+        Effect.logWarning("provider command reactor failed to start session on thread creation", {
+          threadId: event.payload.threadId,
+          cause: Cause.pretty(cause),
+        }),
       ),
     );
   });

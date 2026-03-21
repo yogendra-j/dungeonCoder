@@ -334,8 +334,7 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput: unsupported,
       stopSession: unsupported,
       listSessions: () => Effect.succeed(runtimeSessions),
-      getCapabilities: () =>
-        Effect.succeed({ sessionModelSwitch: "in-session" as const }),
+      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" as const }),
       rollbackConversation: unsupported,
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
@@ -350,9 +349,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provideMerge(Layer.succeed(GitCore, {} as unknown as GitCoreShape)),
-      Layer.provideMerge(
-        Layer.succeed(TextGeneration, {} as unknown as TextGenerationShape),
-      ),
+      Layer.provideMerge(Layer.succeed(TextGeneration, {} as unknown as TextGenerationShape)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
       Layer.provideMerge(NodeServices.layer),
     );

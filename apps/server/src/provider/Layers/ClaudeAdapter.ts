@@ -2714,10 +2714,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 new ProviderAdapterProcessError({
                   provider: PROVIDER,
                   threadId,
-                  detail: toMessage(
-                    cause,
-                    "Failed to eagerly fetch SDK initialization result.",
-                  ),
+                  detail: toMessage(cause, "Failed to eagerly fetch SDK initialization result."),
                   cause,
                 }),
             });
@@ -2764,13 +2761,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             });
           }).pipe(
             Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "claude adapter: eager initialization result fetch failed",
-                {
-                  threadId,
-                  cause: Cause.pretty(cause),
-                },
-              ),
+              Effect.logWarning("claude adapter: eager initialization result fetch failed", {
+                threadId,
+                cause: Cause.pretty(cause),
+              }),
             ),
           ),
         );

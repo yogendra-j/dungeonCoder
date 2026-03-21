@@ -595,7 +595,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               </div>
               <p className="max-w-xs text-xs text-muted-foreground/30">
                 {threadContext.tools.length} tools,{" "}
-                {threadContext.slashCommands.length + threadContext.skills.length} commands available
+                {threadContext.slashCommands.length + threadContext.skills.length} commands
+                available
               </p>
               <p className="text-xs text-muted-foreground/20">Type a message below to begin.</p>
             </>

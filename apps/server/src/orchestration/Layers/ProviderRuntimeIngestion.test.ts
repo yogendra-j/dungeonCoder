@@ -2001,6 +2001,80 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe("# Plan title");
   });
 
+  it("projects reasoning content deltas into visible thread activities", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-1"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Compare both transport layers before finalizing the UI projection.",
+        contentIndex: 0,
+      },
+    });
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-summary-delta"),
+      provider: "claudeAgent",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning-1"),
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: "Summarizing the transport comparison before implementation.",
+        summaryIndex: 1,
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-delta",
+        ) &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-summary-delta",
+        ),
+    );
+
+    const reasoning = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-delta",
+    );
+    const reasoningPayload =
+      reasoning?.payload && typeof reasoning.payload === "object"
+        ? (reasoning.payload as Record<string, unknown>)
+        : undefined;
+    expect(reasoning?.kind).toBe("task.progress");
+    expect(reasoning?.summary).toBe("Reasoning update");
+    expect(reasoningPayload?.detail).toBe(
+      "Compare both transport layers before finalizing the UI projection.",
+    );
+    expect(reasoningPayload?.streamKind).toBe("reasoning_text");
+    expect(reasoningPayload?.contentIndex).toBe(0);
+
+    const reasoningSummary = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-reasoning-summary-delta",
+    );
+    const reasoningSummaryPayload =
+      reasoningSummary?.payload && typeof reasoningSummary.payload === "object"
+        ? (reasoningSummary.payload as Record<string, unknown>)
+        : undefined;
+    expect(reasoningSummary?.kind).toBe("task.progress");
+    expect(reasoningSummary?.summary).toBe("Reasoning summary");
+    expect(reasoningSummaryPayload?.detail).toBe(
+      "Summarizing the transport comparison before implementation.",
+    );
+    expect(reasoningSummaryPayload?.streamKind).toBe("reasoning_summary_text");
+    expect(reasoningSummaryPayload?.summaryIndex).toBe(1);
+  });
+
   it("projects structured user input request and resolution as thread activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
