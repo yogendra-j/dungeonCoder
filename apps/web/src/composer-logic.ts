@@ -253,9 +253,7 @@ export function detectComposerTrigger(
   };
 }
 
-export function parseStandaloneComposerSlashCommand(
-  text: string,
-): "plan" | "default" | null {
+export function parseStandaloneComposerSlashCommand(text: string): "plan" | "default" | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

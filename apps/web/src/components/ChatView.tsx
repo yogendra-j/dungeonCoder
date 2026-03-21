@@ -681,10 +681,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  const threadContext = useMemo(
-    () => deriveThreadContext(threadActivities),
-    [threadActivities],
-  );
+  const threadContext = useMemo(() => deriveThreadContext(threadActivities), [threadActivities]);
   const threadUsageSummary = useMemo(
     () => deriveUsageSummary(threadActivities),
     [threadActivities],
@@ -693,10 +690,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // Derive available slash commands from thread context (for dynamic slash menu)
   const availableSlashCommands = useMemo(() => {
     if (!threadContext) return undefined;
-    const cmds = [
-      ...threadContext.slashCommands,
-      ...threadContext.skills,
-    ];
+    const cmds = [...threadContext.slashCommands, ...threadContext.skills];
     return cmds.length > 0 ? cmds : undefined;
   }, [threadContext]);
 
@@ -1088,26 +1082,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ];
 
       // Dynamic SDK-provided slash commands (from thread context)
-      const sdkCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> =
-        (threadContext?.slashCommands ?? [])
-          .filter((cmd) => !(BUILTIN_SLASH_COMMANDS as readonly string[]).includes(cmd))
-          .map((cmd) => ({
-            id: `slash:${cmd}`,
-            type: "slash-command" as const,
-            command: cmd,
-            label: `/${cmd}`,
-            description: `Run /${cmd}`,
-          }));
+      const sdkCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = (
+        threadContext?.slashCommands ?? []
+      )
+        .filter((cmd) => !(BUILTIN_SLASH_COMMANDS as readonly string[]).includes(cmd))
+        .map((cmd) => ({
+          id: `slash:${cmd}`,
+          type: "slash-command" as const,
+          command: cmd,
+          label: `/${cmd}`,
+          description: `Run /${cmd}`,
+        }));
 
       // Skills as invocable slash commands
-      const skillItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> =
-        (threadContext?.skills ?? []).map((skill) => ({
-          id: `skill:${skill}`,
-          type: "slash-command" as const,
-          command: skill,
-          label: `/${skill}`,
-          description: `Invoke ${skill} skill`,
-        }));
+      const skillItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = (
+        threadContext?.skills ?? []
+      ).map((skill) => ({
+        id: `skill:${skill}`,
+        type: "slash-command" as const,
+        command: skill,
+        label: `/${skill}`,
+        description: `Invoke ${skill} skill`,
+      }));
 
       const allSlashCommandItems = [...builtinItems, ...sdkCommandItems, ...skillItems];
       const query = composerTrigger.query.trim().toLowerCase();

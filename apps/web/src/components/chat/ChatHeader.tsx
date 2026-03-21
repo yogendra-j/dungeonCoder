@@ -117,9 +117,7 @@ export const ChatHeader = memo(function ChatHeader({
               }
             />
             <TooltipPopup side="bottom">
-              {contextInspectorOpen
-                ? "Hide context inspector"
-                : "Show context inspector"}
+              {contextInspectorOpen ? "Hide context inspector" : "Show context inspector"}
             </TooltipPopup>
           </Tooltip>
         ) : null}

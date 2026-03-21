@@ -140,18 +140,10 @@ export const ThreadContextInspector = memo(function ThreadContextInspector({
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-3">
           {/* Session Info */}
-          <InspectorSection
-            title="Session"
-            icon={<InfoIcon className="size-3" />}
-            defaultOpen
-          >
+          <InspectorSection title="Session" icon={<InfoIcon className="size-3" />} defaultOpen>
             <div className="space-y-1.5 text-[12px]">
-              {context.model ? (
-                <KeyValue label="Model" value={context.model} />
-              ) : null}
-              {context.cwd ? (
-                <KeyValue label="CWD" value={context.cwd} truncate />
-              ) : null}
+              {context.model ? <KeyValue label="Model" value={context.model} /> : null}
+              {context.cwd ? <KeyValue label="CWD" value={context.cwd} truncate /> : null}
               {context.permissionMode ? (
                 <KeyValue label="Permissions" value={context.permissionMode} />
               ) : null}
@@ -215,9 +207,7 @@ export const ThreadContextInspector = memo(function ThreadContextInspector({
               <div className="space-y-2">
                 {groupTools(context.tools).map(({ group, items }) => (
                   <div key={group}>
-                    <p className="mb-1 text-[10px] font-medium text-muted-foreground/40">
-                      {group}
-                    </p>
+                    <p className="mb-1 text-[10px] font-medium text-muted-foreground/40">{group}</p>
                     <div className="flex flex-wrap gap-1">
                       {items.map((tool) => (
                         <Badge
@@ -324,9 +314,7 @@ export const ThreadContextInspector = memo(function ThreadContextInspector({
                     <span className="font-medium">{plugin.name}</span>
                     {plugin.path ? (
                       <span className="ml-1 text-muted-foreground/50" title={plugin.path}>
-                        {plugin.path.length > 30
-                          ? `...${plugin.path.slice(-30)}`
-                          : plugin.path}
+                        {plugin.path.length > 30 ? `...${plugin.path.slice(-30)}` : plugin.path}
                       </span>
                     ) : null}
                   </div>

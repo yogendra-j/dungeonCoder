@@ -315,11 +315,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.deepEqual(createInput?.options.settingSources, [
-        "user",
-        "project",
-        "local",
-      ]);
+      assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
