@@ -90,6 +90,11 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
   };
 
+  // Return a never-resolving promise so that the eager initialization
+  // fiber in startSession doesn't emit an extra session.configured event
+  // during tests.  Production code uses the real SDK which resolves this.
+  readonly initializationResult = (): Promise<unknown> => new Promise(() => {});
+
   readonly close = (): void => {
     this.closeCalls += 1;
     this.finish();

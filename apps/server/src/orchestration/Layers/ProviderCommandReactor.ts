@@ -32,6 +32,7 @@ type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.created"
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
@@ -485,6 +486,34 @@ const make = Effect.gen(function* () {
       );
   });
 
+  /**
+   * When a thread is created, eagerly start a provider session so that the
+   * session context (tools, slash commands, skills, etc.) is available in
+   * the UI immediately – before the user sends the first message.
+   *
+   * Failures are swallowed intentionally: the existing turn-start path will
+   * retry session creation on the first actual message, so this is purely
+   * a best-effort warm-up.
+   */
+  const processThreadCreated = Effect.fnUntraced(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.created" }>,
+  ) {
+    yield* ensureSessionForThread(
+      event.payload.threadId,
+      event.payload.createdAt,
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning(
+          "provider command reactor failed to start session on thread creation",
+          {
+            threadId: event.payload.threadId,
+            cause: Cause.pretty(cause),
+          },
+        ),
+      ),
+    );
+  });
+
   const processTurnStartRequested = Effect.fnUntraced(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -692,6 +721,9 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
+        case "thread.created":
+          yield* processThreadCreated(event);
+          return;
         case "thread.runtime-mode-set": {
           const thread = yield* resolveThread(event.payload.threadId);
           if (!thread?.session || thread.session.status === "stopped") {
@@ -743,6 +775,7 @@ const make = Effect.gen(function* () {
   const start: ProviderCommandReactorShape["start"] = Effect.forkScoped(
     Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
       if (
+        event.type !== "thread.created" &&
         event.type !== "thread.runtime-mode-set" &&
         event.type !== "thread.turn-start-requested" &&
         event.type !== "thread.turn-interrupt-requested" &&

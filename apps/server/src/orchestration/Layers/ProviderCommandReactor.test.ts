@@ -252,6 +252,19 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
+    // Drain the worker so the session warm-up triggered by thread.created
+    // is fully processed, then reset all mocks so existing tests start from
+    // a clean slate and are not affected by the eager session start.
+    await drain();
+    startSession.mockClear();
+    sendTurn.mockClear();
+    interruptTurn.mockClear();
+    respondToRequest.mockClear();
+    respondToUserInput.mockClear();
+    stopSession.mockClear();
+    renameBranch.mockClear();
+    generateBranchName.mockClear();
+
     return {
       engine,
       startSession,
@@ -266,6 +279,144 @@ describe("ProviderCommandReactor", () => {
       drain,
     };
   }
+
+  it("eagerly starts a provider session when a thread is created", async () => {
+    // This test verifies that the ProviderCommandReactor starts a session
+    // as soon as thread.created fires (before any turn is sent). We build
+    // a minimal harness WITHOUT the drain+mockClear step so we can observe
+    // the eager session start directly.
+    const now = new Date().toISOString();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-eager-"));
+    createdStateDirs.add(stateDir);
+    const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    let nextSessionIndex = 1;
+    const runtimeSessions: Array<ProviderSession> = [];
+    const startSession = vi.fn((_: unknown, input: unknown) => {
+      const sessionIndex = nextSessionIndex++;
+      const provider =
+        typeof input === "object" &&
+        input !== null &&
+        "provider" in input &&
+        (input.provider === "codex" || input.provider === "claudeAgent")
+          ? input.provider
+          : "codex";
+      const threadId =
+        typeof input === "object" &&
+        input !== null &&
+        "threadId" in input &&
+        typeof input.threadId === "string"
+          ? ThreadId.makeUnsafe(input.threadId)
+          : ThreadId.makeUnsafe(`thread-${sessionIndex}`);
+      const session: ProviderSession = {
+        provider,
+        status: "ready" as const,
+        runtimeMode: "full-access",
+        threadId,
+        resumeCursor: { opaque: `resume-${sessionIndex}` },
+        createdAt: now,
+        updatedAt: now,
+      };
+      runtimeSessions.push(session);
+      return Effect.succeed(session);
+    });
+    const sendTurn = vi.fn((_: unknown) =>
+      Effect.succeed({
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        turnId: asTurnId("turn-1"),
+      }),
+    );
+    const unsupported = () => Effect.die(new Error("Unsupported")) as never;
+    const service: ProviderServiceShape = {
+      startSession: startSession as ProviderServiceShape["startSession"],
+      sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
+      interruptTurn: unsupported,
+      respondToRequest: unsupported,
+      respondToUserInput: unsupported,
+      stopSession: unsupported,
+      listSessions: () => Effect.succeed(runtimeSessions),
+      getCapabilities: () =>
+        Effect.succeed({ sessionModelSwitch: "in-session" as const }),
+      rollbackConversation: unsupported,
+      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    };
+
+    const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const layer = ProviderCommandReactorLive.pipe(
+      Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(GitCore, {} as unknown as GitCoreShape)),
+      Layer.provideMerge(
+        Layer.succeed(TextGeneration, {} as unknown as TextGenerationShape),
+      ),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), stateDir)),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    runtime = ManagedRuntime.make(layer);
+
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    const drain = () => Effect.runPromise(reactor.drain);
+
+    // Create project
+    await Effect.runPromise(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-create"),
+        projectId: asProjectId("project-1"),
+        title: "Eager Session Project",
+        workspaceRoot: "/tmp/eager-session-project",
+        defaultModel: "gpt-5-codex",
+        createdAt: now,
+      }),
+    );
+
+    // Before thread creation, no session should exist
+    expect(startSession).not.toHaveBeenCalled();
+
+    // Create thread (no turn)
+    await Effect.runPromise(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-create"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        projectId: asProjectId("project-1"),
+        title: "Eager Thread",
+        model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    // Drain the reactor so it processes the thread.created event
+    await drain();
+
+    // Session should have been started eagerly
+    expect(startSession).toHaveBeenCalledTimes(1);
+    expect(startSession.mock.calls[0]?.[1]).toMatchObject({
+      threadId: "thread-1",
+      provider: "codex",
+      runtimeMode: "approval-required",
+    });
+
+    // Read model should reflect the session
+    const readModel = await Effect.runPromise(engine.getReadModel());
+    const thread = readModel.threads.find((t) => t.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.session).not.toBeNull();
+    expect(thread?.session?.providerName).toBe("codex");
+
+    // No turn should have been sent
+    expect(sendTurn).not.toHaveBeenCalled();
+  });
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
     const harness = await createHarness();
@@ -288,14 +439,10 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    // Session was eagerly started during thread creation, so no additional
+    // startSession call is needed – the existing session is reused.
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.makeUnsafe("thread-1"));
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      cwd: "/tmp/provider-project",
-      model: "gpt-5-codex",
-      runtimeMode: "approval-required",
-    });
+    expect(harness.startSession).not.toHaveBeenCalled();
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
@@ -332,17 +479,10 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    // Codex supports in-session model switching so the eagerly started session
+    // is reused; model options are forwarded via the turn, not a new session.
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      model: "gpt-5.3-codex",
-      modelOptions: {
-        codex: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
-      },
-    });
+    expect(harness.startSession).not.toHaveBeenCalled();
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
       model: "gpt-5.3-codex",
@@ -531,7 +671,9 @@ describe("ProviderCommandReactor", () => {
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
-    expect(thread?.session).toBeNull();
+    // Session was eagerly started during thread creation and remains bound to codex.
+    expect(thread?.session).not.toBeNull();
+    expect(thread?.session?.providerName).toBe("codex");
     expect(
       thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
     ).toMatchObject({
@@ -610,7 +752,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    // Session was eagerly started; both turns reuse it.
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
@@ -631,7 +773,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.startSession.mock.calls.length).toBe(0);
     expect(harness.stopSession.mock.calls.length).toBe(0);
   });
 
@@ -811,7 +953,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    // Session was eagerly started; first turn reuses it.
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
@@ -843,7 +985,7 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
-    expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.startSession.mock.calls.length).toBe(0);
     expect(harness.sendTurn.mock.calls.length).toBe(1);
     expect(harness.stopSession.mock.calls.length).toBe(0);
 

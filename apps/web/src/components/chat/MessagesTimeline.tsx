@@ -14,9 +14,9 @@ import {
   type VirtualItem,
   useVirtualizer,
 } from "@tanstack/react-virtual";
-import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
+import { deriveTimelineEntries, formatElapsed, type ThreadContext } from "../../session-logic";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
-import { type TurnDiffSummary } from "../../types";
+import { type SessionPhase, type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
@@ -27,6 +27,7 @@ import {
   GlobeIcon,
   HammerIcon,
   type LucideIcon,
+  LoaderIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -81,6 +82,11 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  isLocalDraftThread?: boolean;
+  threadContext?: ThreadContext | null;
+  sessionPhase?: SessionPhase;
+  sessionInitInProgress?: boolean;
+  onStartSession?: () => void;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -105,6 +111,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  isLocalDraftThread,
+  threadContext,
+  sessionPhase,
+  sessionInitInProgress,
+  onStartSession,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -556,9 +567,59 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
-          Send a message to start the conversation.
-        </p>
+        <div className="flex flex-col items-center gap-3 text-center">
+          {isLocalDraftThread ? (
+            <>
+              <p className="text-sm text-muted-foreground/30">
+                Send a message to start the conversation.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={onStartSession}
+                disabled={sessionInitInProgress}
+              >
+                <ZapIcon className="size-3.5" />
+                {sessionInitInProgress ? "Starting session\u2026" : "Start Session"}
+              </Button>
+              <p className="max-w-xs text-xs text-muted-foreground/20">
+                Initialize tools, slash commands, and context before sending your first message
+              </p>
+            </>
+          ) : threadContext ? (
+            <>
+              <div className="flex items-center gap-2 text-sm text-emerald-500/70">
+                <CheckIcon className="size-4" />
+                Session ready
+              </div>
+              <p className="max-w-xs text-xs text-muted-foreground/30">
+                {threadContext.tools.length} tools,{" "}
+                {threadContext.slashCommands.length + threadContext.skills.length} commands available
+              </p>
+              <p className="text-xs text-muted-foreground/20">Type a message below to begin.</p>
+            </>
+          ) : sessionPhase === "ready" ? (
+            <>
+              <div className="flex items-center gap-2 text-sm text-emerald-500/70">
+                <CheckIcon className="size-4" />
+                Session started
+              </div>
+              <p className="max-w-xs text-xs text-muted-foreground/30">
+                Tools and commands will be available after the first message.
+              </p>
+              <p className="text-xs text-muted-foreground/20">Type a message below to begin.</p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground/30">
+                <LoaderIcon className="size-3.5 animate-spin" />
+                Setting up session{"\u2026"}
+              </div>
+              <p className="text-xs text-muted-foreground/20">Type a message below to begin.</p>
+            </>
+          )}
+        </div>
       </div>
     );
   }

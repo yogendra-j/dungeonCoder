@@ -165,6 +165,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
+  readonly initializationResult: () => Promise<unknown>;
   readonly close: () => void;
 }
 
@@ -2692,6 +2693,87 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           }
           Effect.runFork(handleStreamExit(context, exit));
         });
+
+        // Eagerly fetch the SDK initialization result so that session
+        // context (slash commands, agents, etc.) is available before the
+        // user sends the first message.
+        //
+        // The real CLI subprocess only emits the full "init" system message
+        // (with tools, MCP servers, skills, etc.) when the first user
+        // prompt is processed.  However, the SDK control channel
+        // (`initializationResult()`) completes immediately and returns
+        // slash commands and agents.  We emit a synthetic
+        // `session.configured` event from this data so that the UI can
+        // show available commands right away.  The full tool list will
+        // arrive via the normal pipeline once the first turn is sent.
+        Effect.runFork(
+          Effect.gen(function* () {
+            const result = yield* Effect.tryPromise({
+              try: () => queryRuntime.initializationResult(),
+              catch: (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId,
+                  detail: toMessage(
+                    cause,
+                    "Failed to eagerly fetch SDK initialization result.",
+                  ),
+                  cause,
+                }),
+            });
+
+            // The control response uses `commands: SlashCommand[]` (objects
+            // with {name, description, argumentHint}) and `agents:
+            // AgentInfo[]` (objects with {name, description}).  The init
+            // system message and the web UI expect plain string arrays of
+            // names.  Extract the `name` field from each object.
+            //
+            // We pass `tools: []` (an empty array) to satisfy the
+            // `Array.isArray(raw.tools)` guard in ProviderRuntimeIngestion.
+            const raw = (result ?? {}) as Record<string, unknown>;
+            const nameOf = (item: unknown): string | undefined =>
+              typeof item === "object" && item !== null && "name" in item
+                ? String((item as { name: unknown }).name)
+                : typeof item === "string"
+                  ? item
+                  : undefined;
+
+            const slashCommands = Array.isArray(raw.commands)
+              ? raw.commands.map(nameOf).filter((n): n is string => n !== undefined)
+              : [];
+            const agents = Array.isArray(raw.agents)
+              ? raw.agents.map(nameOf).filter((n): n is string => n !== undefined)
+              : [];
+
+            const stamp = yield* makeEventStamp();
+            yield* offerRuntimeEvent({
+              type: "session.configured",
+              eventId: stamp.eventId,
+              provider: PROVIDER,
+              createdAt: stamp.createdAt,
+              threadId,
+              payload: {
+                config: {
+                  tools: [],
+                  slash_commands: slashCommands,
+                  agents,
+                  ...(input.model ? { model: input.model } : {}),
+                },
+              },
+              providerRefs: {},
+            });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "claude adapter: eager initialization result fetch failed",
+                {
+                  threadId,
+                  cause: Cause.pretty(cause),
+                },
+              ),
+            ),
+          ),
+        );
 
         return {
           ...session,

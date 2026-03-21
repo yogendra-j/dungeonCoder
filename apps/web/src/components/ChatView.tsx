@@ -327,6 +327,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
+  const [sessionInitInProgress, setSessionInitInProgress] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -482,6 +483,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
+
+  // When the server thread arrives after "Start Session", the draft is
+  // naturally superseded (serverThread takes precedence) and
+  // isLocalDraftThread becomes false. Reset sessionInitInProgress so the
+  // send button is re-enabled and the UI transitions to the session state.
+  useEffect(() => {
+    if (!isLocalDraftThread && sessionInitInProgress) {
+      setSessionInitInProgress(false);
+    }
+  }, [isLocalDraftThread, sessionInitInProgress]);
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
@@ -1131,7 +1142,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, threadContext, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2391,6 +2402,55 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
+  const onStartSession = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || !activeThread || !activeProject || !isLocalDraftThread) return;
+    if (sessionInitInProgress || sendInFlightRef.current) return;
+
+    setSessionInitInProgress(true);
+    try {
+      const threadCreateModel: ModelSlug =
+        selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
+
+      await api.orchestration.dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        projectId: activeProject.id,
+        title: "New thread",
+        model: threadCreateModel,
+        runtimeMode,
+        interactionMode,
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        createdAt: activeThread.createdAt,
+      });
+
+      // Do NOT clear the draft here. The snapshot sync (~100ms) will bring in
+      // the server thread, which naturally takes precedence via
+      // `activeThread = serverThread ?? localDraftThread`. Clearing the draft
+      // immediately would cause routeThreadExists to become false (since the
+      // server thread hasn't synced yet), triggering navigation to "/".
+      // Keep sessionInitInProgress=true so the button stays disabled until
+      // isLocalDraftThread transitions to false (handled by the effect below).
+    } catch (err) {
+      setSessionInitInProgress(false);
+      setThreadError(
+        activeThread.id,
+        err instanceof Error ? err.message : "Failed to start session.",
+      );
+    }
+  }, [
+    activeThread,
+    activeProject,
+    isLocalDraftThread,
+    sessionInitInProgress,
+    selectedModel,
+    runtimeMode,
+    interactionMode,
+    setThreadError,
+  ]);
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
@@ -3599,6 +3659,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeProject?.cwd ?? undefined}
+                isLocalDraftThread={isLocalDraftThread}
+                threadContext={threadContext}
+                sessionPhase={phase}
+                sessionInitInProgress={sessionInitInProgress}
+                onStartSession={onStartSession}
               />
             </div>
 
@@ -4053,7 +4118,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               type="submit"
                               className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
                               disabled={
-                                isSendBusy || isConnecting || !composerSendState.hasSendableContent
+                                isSendBusy ||
+                                isConnecting ||
+                                sessionInitInProgress ||
+                                !composerSendState.hasSendableContent
                               }
                               aria-label={
                                 isConnecting
