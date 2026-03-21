@@ -96,4 +96,67 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-terminal");
     expect(markup).toContain("yoo what&#x27;s ");
   });
+
+  it("renders reasoning in a separate collapsible card instead of generic work log rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        scrollContainer={null}
+        timelineEntries={[
+          {
+            id: "reasoning-entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "reasoning-entry-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Reasoning update",
+              detail: "Compare both transport layers",
+              tone: "thinking",
+              reasoningStreamKind: "reasoning_text",
+              reasoningContentIndex: 0,
+            },
+          },
+          {
+            id: "reasoning-entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "reasoning-entry-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Reasoning update",
+              detail: " before finalizing the UI projection.",
+              tone: "thinking",
+              reasoningStreamKind: "reasoning_text",
+              reasoningContentIndex: 0,
+            },
+          },
+        ]}
+        completionDividerBeforeEntryId={null}
+        completionSummary={null}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain("2 updates");
+    expect(markup).toContain("Compare both transport layers before finalizing the UI projection.");
+    expect(markup).not.toContain("Work log");
+  });
 });

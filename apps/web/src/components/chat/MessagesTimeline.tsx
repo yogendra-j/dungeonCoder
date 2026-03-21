@@ -22,6 +22,8 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
@@ -158,11 +160,35 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
 
       if (timelineEntry.kind === "work") {
+        if (isReasoningWorkEntry(timelineEntry.entry)) {
+          const groupedEntries: ReasoningTimelineWorkEntry[] = [timelineEntry.entry];
+          let cursor = index + 1;
+          while (cursor < timelineEntries.length) {
+            const nextEntry = timelineEntries[cursor];
+            if (!nextEntry || nextEntry.kind !== "work" || !isReasoningWorkEntry(nextEntry.entry)) {
+              break;
+            }
+            groupedEntries.push(nextEntry.entry);
+            cursor += 1;
+          }
+          nextRows.push({
+            kind: "reasoning",
+            id: timelineEntry.id,
+            createdAt: timelineEntry.createdAt,
+            groupedEntries,
+            isLive: activeTurnInProgress,
+          });
+          index = cursor - 1;
+          continue;
+        }
+
         const groupedEntries = [timelineEntry.entry];
         let cursor = index + 1;
         while (cursor < timelineEntries.length) {
           const nextEntry = timelineEntries[cursor];
-          if (!nextEntry || nextEntry.kind !== "work") break;
+          if (!nextEntry || nextEntry.kind !== "work" || isReasoningWorkEntry(nextEntry.entry)) {
+            break;
+          }
           groupedEntries.push(nextEntry.entry);
           cursor += 1;
         }
@@ -208,7 +234,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     return nextRows;
-  }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
+  }, [
+    timelineEntries,
+    completionDividerBeforeEntryId,
+    isWorking,
+    activeTurnStartedAt,
+    activeTurnInProgress,
+  ]);
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
@@ -262,6 +294,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const row = rows[index];
       if (!row) return 96;
       if (row.kind === "work") return 112;
+      if (row.kind === "reasoning") return row.isLive ? 164 : 112;
       if (row.kind === "proposed-plan") return estimateTimelineProposedPlanHeight(row.proposedPlan);
       if (row.kind === "working") return 40;
       return estimateTimelineMessageHeight(row.message, { timelineWidthPx });
@@ -307,10 +340,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [allDirectoriesExpandedByTurnId, setAllDirectoriesExpandedByTurnId] = useState<
     Record<string, boolean>
   >({});
+  const [expandedReasoningGroups, setExpandedReasoningGroups] = useState<Record<string, boolean>>(
+    {},
+  );
   const onToggleAllDirectories = useCallback((turnId: TurnId) => {
     setAllDirectoriesExpandedByTurnId((current) => ({
       ...current,
       [turnId]: !(current[turnId] ?? true),
+    }));
+  }, []);
+  const onToggleReasoningGroup = useCallback((groupId: string) => {
+    setExpandedReasoningGroups((current) => ({
+      ...current,
+      [groupId]: !(current[groupId] ?? false),
     }));
   }, []);
 
@@ -360,6 +402,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 ))}
               </div>
             </div>
+          );
+        })()}
+
+      {row.kind === "reasoning" &&
+        (() => {
+          const reasoningGroup = buildReasoningGroup(row.groupedEntries);
+          const expanded = expandedReasoningGroups[row.id] ?? row.isLive;
+          return (
+            <ReasoningGroupCard
+              groupId={row.id}
+              group={reasoningGroup}
+              expanded={expanded}
+              isLive={row.isLive}
+              onToggle={onToggleReasoningGroup}
+            />
           );
         })()}
 
@@ -663,12 +720,22 @@ type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineProposedPlan = Extract<TimelineEntry, { kind: "proposed-plan" }>["proposedPlan"];
 type TimelineWorkEntry = Extract<TimelineEntry, { kind: "work" }>["entry"];
+type ReasoningTimelineWorkEntry = TimelineWorkEntry & {
+  reasoningStreamKind: "reasoning_text" | "reasoning_summary_text";
+};
 type TimelineRow =
   | {
       kind: "work";
       id: string;
       createdAt: string;
       groupedEntries: TimelineWorkEntry[];
+    }
+  | {
+      kind: "reasoning";
+      id: string;
+      createdAt: string;
+      groupedEntries: ReasoningTimelineWorkEntry[];
+      isLive: boolean;
     }
   | {
       kind: "message";
@@ -689,6 +756,81 @@ type TimelineRow =
 function estimateTimelineProposedPlanHeight(proposedPlan: TimelineProposedPlan): number {
   const estimatedLines = Math.max(1, Math.ceil(proposedPlan.planMarkdown.length / 72));
   return 120 + Math.min(estimatedLines * 22, 880);
+}
+
+function isReasoningWorkEntry(
+  workEntry: TimelineWorkEntry,
+): workEntry is ReasoningTimelineWorkEntry {
+  return (
+    workEntry.reasoningStreamKind === "reasoning_text" ||
+    workEntry.reasoningStreamKind === "reasoning_summary_text"
+  );
+}
+
+interface ReasoningSegment {
+  key: string;
+  kind: "reasoning_text" | "reasoning_summary_text";
+  text: string;
+}
+
+function truncateInlinePreview(value: string, limit = 140): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= limit) {
+    return compact;
+  }
+  return `${compact.slice(0, limit - 3)}...`;
+}
+
+function buildReasoningGroup(entries: ReadonlyArray<ReasoningTimelineWorkEntry>): {
+  title: string;
+  preview: string | null;
+  thinkingText: string | null;
+  summaryText: string | null;
+  segments: ReasoningSegment[];
+  updatesCount: number;
+} {
+  const segments: ReasoningSegment[] = [];
+  for (const entry of entries) {
+    const text = entry.reasoningDelta ?? entry.detail ?? "";
+    if (text.length === 0) continue;
+    const index =
+      entry.reasoningStreamKind === "reasoning_summary_text"
+        ? (entry.reasoningSummaryIndex ?? 0)
+        : (entry.reasoningContentIndex ?? 0);
+    const key = `${entry.reasoningStreamKind}:${index}`;
+    const previous = segments.at(-1);
+    if (previous && previous.key === key) {
+      previous.text += text;
+      continue;
+    }
+    segments.push({
+      key,
+      kind: entry.reasoningStreamKind,
+      text,
+    });
+  }
+
+  const thinkingText =
+    segments
+      .filter((segment) => segment.kind === "reasoning_text")
+      .map((segment) => segment.text)
+      .join("")
+      .trim() || null;
+  const summaryText =
+    segments
+      .filter((segment) => segment.kind === "reasoning_summary_text")
+      .map((segment) => segment.text)
+      .join("")
+      .trim() || null;
+  const previewSource = summaryText ?? thinkingText;
+  return {
+    title: summaryText ? "Reasoning" : "Thinking",
+    preview: previewSource ? truncateInlinePreview(previewSource) : null,
+    thinkingText,
+    summaryText,
+    segments,
+    updatesCount: entries.length,
+  };
 }
 
 function formatWorkingTimer(startIso: string, endIso: string): string | null {
@@ -966,6 +1108,76 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             <span className="px-1 text-[10px] text-muted-foreground/55">
               +{(workEntry.changedFiles?.length ?? 0) - 4}
             </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+const ReasoningGroupCard = memo(function ReasoningGroupCard(props: {
+  groupId: string;
+  group: ReturnType<typeof buildReasoningGroup>;
+  expanded: boolean;
+  isLive: boolean;
+  onToggle: (groupId: string) => void;
+}) {
+  const ToggleIcon = props.expanded ? ChevronDownIcon : ChevronRightIcon;
+  const showPreview = !props.expanded && props.group.preview;
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/30 px-3 py-2.5">
+      <button
+        type="button"
+        className="flex w-full items-start gap-2.5 rounded-lg text-left transition-colors hover:bg-background/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border"
+        aria-label={props.expanded ? "Collapse reasoning" : "Expand reasoning"}
+        onClick={() => props.onToggle(props.groupId)}
+      >
+        <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background/60 text-muted-foreground/75">
+          <BotIcon className="size-3" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-[12px] font-medium text-foreground/88">{props.group.title}</p>
+            <span className="text-[10px] text-muted-foreground/55">
+              {props.group.updatesCount} update{props.group.updatesCount === 1 ? "" : "s"}
+            </span>
+          </div>
+          {showPreview && (
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-foreground/72">
+              {props.group.preview}
+            </p>
+          )}
+        </div>
+        <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70">
+          <ToggleIcon className="size-3.5" />
+        </span>
+      </button>
+
+      {props.expanded && (
+        <div className="mt-2.5 space-y-2 border-border/60 border-t pt-2.5">
+          {props.group.summaryText && (
+            <div className="rounded-lg border border-border/65 bg-background/45 px-3 py-2.5">
+              <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60">
+                Summary
+              </p>
+              <p className="whitespace-pre-wrap wrap-break-word text-sm leading-5 text-foreground/84">
+                {props.group.summaryText}
+              </p>
+            </div>
+          )}
+          {props.group.thinkingText && (
+            <div className="rounded-lg border border-border/65 bg-background/45 px-3 py-2.5">
+              <p className="mb-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60">
+                {props.isLive ? "Current thinking" : "Thought process"}
+              </p>
+              <p className="whitespace-pre-wrap wrap-break-word text-sm leading-5 text-foreground/82">
+                {props.group.thinkingText}
+              </p>
+            </div>
+          )}
+          {!props.group.summaryText && !props.group.thinkingText && (
+            <p className="text-sm leading-6 text-muted-foreground/65">No reasoning text yet.</p>
           )}
         </div>
       )}

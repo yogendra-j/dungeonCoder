@@ -43,6 +43,10 @@ export interface WorkLogEntry {
   toolTitle?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
+  reasoningStreamKind?: "reasoning_text" | "reasoning_summary_text";
+  reasoningContentIndex?: number;
+  reasoningSummaryIndex?: number;
+  reasoningDelta?: string;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -495,7 +499,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     id: activity.id,
     createdAt: activity.createdAt,
     label: activity.summary,
-    tone: activity.tone === "approval" ? "info" : activity.tone,
+    tone:
+      payload?.streamKind === "reasoning_text" || payload?.streamKind === "reasoning_summary_text"
+        ? "thinking"
+        : activity.tone === "approval"
+          ? "info"
+          : activity.tone,
     activityKind: activity.kind,
   };
   const itemType = extractWorkLogItemType(payload);
@@ -520,6 +529,21 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (requestKind) {
     entry.requestKind = requestKind;
+  }
+  if (
+    payload?.streamKind === "reasoning_text" ||
+    payload?.streamKind === "reasoning_summary_text"
+  ) {
+    entry.reasoningStreamKind = payload.streamKind;
+    if (typeof payload.delta === "string" && payload.delta.length > 0) {
+      entry.reasoningDelta = payload.delta;
+    }
+  }
+  if (typeof payload?.contentIndex === "number") {
+    entry.reasoningContentIndex = payload.contentIndex;
+  }
+  if (typeof payload?.summaryIndex === "number") {
+    entry.reasoningSummaryIndex = payload.summaryIndex;
   }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {

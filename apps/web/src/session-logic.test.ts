@@ -770,6 +770,52 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
+  it("keeps reasoning stream metadata separate from generic tool work", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "reasoning-1",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        payload: {
+          detail: "Compare both transport layers",
+          streamKind: "reasoning_text",
+          contentIndex: 0,
+        },
+      }),
+      makeActivity({
+        id: "reasoning-2",
+        kind: "task.progress",
+        summary: "Reasoning summary",
+        tone: "info",
+        payload: {
+          detail: "Transport comparison complete.",
+          streamKind: "reasoning_summary_text",
+          summaryIndex: 1,
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+
+    expect(entries).toMatchObject([
+      {
+        id: "reasoning-1",
+        tone: "thinking",
+        reasoningStreamKind: "reasoning_text",
+        reasoningContentIndex: 0,
+        reasoningDelta: "Compare both transport layers",
+      },
+      {
+        id: "reasoning-2",
+        tone: "thinking",
+        reasoningStreamKind: "reasoning_summary_text",
+        reasoningSummaryIndex: 1,
+        reasoningDelta: "Transport comparison complete.",
+      },
+    ]);
+  });
+
   it("collapses repeated lifecycle updates for the same tool call into one entry", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

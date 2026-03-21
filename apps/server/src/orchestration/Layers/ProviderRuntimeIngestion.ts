@@ -75,8 +75,7 @@ function truncateDetail(value: string, limit = 180): string {
 }
 
 function normalizeReasoningDelta(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  return value.length > 0 ? value : undefined;
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -415,6 +414,7 @@ function runtimeEventToActivities(
           payload: {
             detail: truncateDetail(detail),
             summary: truncateDetail(detail),
+            delta: detail,
             streamKind: event.payload.streamKind,
             ...(event.payload.contentIndex !== undefined
               ? { contentIndex: event.payload.contentIndex }

@@ -2056,6 +2056,9 @@ describe("ProviderRuntimeIngestion", () => {
     expect(reasoningPayload?.detail).toBe(
       "Compare both transport layers before finalizing the UI projection.",
     );
+    expect(reasoningPayload?.delta).toBe(
+      "Compare both transport layers before finalizing the UI projection.",
+    );
     expect(reasoningPayload?.streamKind).toBe("reasoning_text");
     expect(reasoningPayload?.contentIndex).toBe(0);
 
@@ -2069,6 +2072,9 @@ describe("ProviderRuntimeIngestion", () => {
     expect(reasoningSummary?.kind).toBe("task.progress");
     expect(reasoningSummary?.summary).toBe("Reasoning summary");
     expect(reasoningSummaryPayload?.detail).toBe(
+      "Summarizing the transport comparison before implementation.",
+    );
+    expect(reasoningSummaryPayload?.delta).toBe(
       "Summarizing the transport comparison before implementation.",
     );
     expect(reasoningSummaryPayload?.streamKind).toBe("reasoning_summary_text");
