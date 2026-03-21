@@ -2457,9 +2457,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: new Date().toISOString(),
         });
 
-        // Pre-fill the forked thread's composer with the clicked message text
+        // Carry over composer settings (provider, model, effort, mode) from the source thread.
+        const draftStore = useComposerDraftStore.getState();
         if (clickedMessage?.text) {
-          useComposerDraftStore.getState().setPrompt(forkThreadId, clickedMessage.text);
+          draftStore.setPrompt(forkThreadId, clickedMessage.text);
+        }
+        // Set provider first so model normalisation uses the correct provider.
+        draftStore.setProvider(forkThreadId, "claudeAgent");
+        draftStore.setModel(forkThreadId, activeThread.model);
+        // Copy current modelOptions (effort/thinking) – prefer composer override, fall back to thread defaults.
+        const sourceModelOptions =
+          draftStore.draftsByThreadId[activeThread.id]?.modelOptions ?? null;
+        if (sourceModelOptions) {
+          draftStore.setModelOptions(forkThreadId, sourceModelOptions);
         }
 
         // Navigate to the forked thread

@@ -768,11 +768,12 @@ const make = Effect.gen(function* () {
       onSome: (runtime) => runtime.cwd,
     });
 
-    // 3. Fork the SDK session
-    const forkResult = yield* providerService.forkSession({
-      threadId: sourceThreadId,
-      title: `Fork of ${thread.title}`,
-    });
+    // 3. SDK forkSession is currently unreliable – the returned session ID
+    //    is often not recognised by the Claude API backend, causing
+    //    "No conversation found" crashes when the adapter later tries to
+    //    resume.  Skip it entirely and start a fresh session on the forked
+    //    thread instead.  The conversation history is preserved in the
+    //    orchestration layer (seeded messages) so the UI still shows it.
 
     // 4. Create git worktree from fork-point checkpoint (if checkpoint available)
     let worktreePath: string | null = null;
@@ -838,18 +839,16 @@ const make = Effect.gen(function* () {
       });
     }
 
-    // 7. Start a provider session on the new thread with the forked resumeCursor.
-    // This binds the forked SDK session to the new thread so future turns
-    // continue from the fork point. The ProviderCommandReactor will also see
-    // thread.created, but ensureSessionForThread will find an active session
-    // and skip the redundant start.
+    // 7. Start a fresh provider session on the new thread.
+    // The ProviderCommandReactor will also see thread.created and call
+    // ensureSessionForThread, but we start here to control the CWD and
+    // model explicitly.
     const effectiveCwd = worktreePath ?? sourceCwd;
     yield* providerService.startSession(newThreadId, {
       threadId: newThreadId,
       provider: "claudeAgent",
       ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
       model: thread.model,
-      resumeCursor: forkResult.resumeCursor,
       runtimeMode: thread.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     });
   });
@@ -879,7 +878,7 @@ const make = Effect.gen(function* () {
         Effect.catch((error) =>
           appendForkFailureActivity({
             threadId: event.payload.sourceThreadId,
-            detail: error.message,
+            detail: error instanceof Error ? error.message : String(error),
             createdAt: new Date().toISOString(),
           }),
         ),
